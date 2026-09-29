@@ -7,12 +7,11 @@ G = 9.81                # [m/s^2] gravity
 CR = 0.012              # [-] rolling resistance coefficient
 R_TIRE = 0.2032         # [m] effective loaded tire radius
 D_AIR = 1.225           # [kg/m^3] air density
-CD = 0.1                # [-] drag coefficient
-A_FRONTAL = 1.0         # [m^2] frontal area
+CD = 0.85                # [-] drag coefficient
+A_FRONTAL = 2.2         # [m^2] frontal area
 MU_PEAK = 1.4           # peak friction coefficient
 KAPPA_PEAK = 0.60       # slip ratio at peak (~10%)
 MU_SLIDE = 0.9          # sliding friction at high slip
-DRAG_COEFF = 0.5 * D_AIR * CD * A_FRONTAL  # [N/(m/s)^2] coefficient for F_drag = D * v^2
 N_DRIVEN = M_VEHICLE * G
 
 # Powertrain
@@ -31,7 +30,7 @@ GEAR_RATIOS = {
 ENGINE_REDLINE_RPM = 13000.0  # [rpm]
 ENGINE_IDLE_RPM = 6000.0      # [rpm]
 ENGINE_LAUNCH_RPM = 9000.0    # [rpm]
-LAUNCH_DURATION = 0.3         # [s]
+LAUNCH_DURATION = 1.3         # [s]
 
 # Torque map
 # Linearly interpolated between these points [rpm, lbft]
@@ -53,11 +52,11 @@ WHEEL_TORQUE_POINTS = np.array([
     [11900.0, 34.0],
     [12000.0, 33.0],
     [12200.0, 24.0],
-    [12500.0, 3.0]
+    [12500.0, 11.0]
 ])
 
 # Shifting & control
-SHIFT_DELAY = 0.15       # [s] duration of no drive force during an upshift
+SHIFT_DELAY = 0.225       # [s] duration of no drive force during an upshift
 USE_AUTO_SHIFT = True    # if False, no shifting: stay in 1st gear
 
 # Per-gear upshift RPM thresholds
@@ -65,7 +64,7 @@ SHIFT_RPM_THRESHOLDS = {
     1: 11000.0,
     2: 12500.0,
     3: 12500.0,
-    4: 12700.0,
+    4: 12500.0,
     5: 13000.0,
     6: None,     # no upshift from 6th
 }
@@ -85,8 +84,7 @@ class carInfo:
     def __init__(self, 
                  mass = M_VEHICLE, cr = CR, tireRad = R_TIRE, 
                  cd = CD, af = A_FRONTAL, mu_peak = MU_PEAK, 
-                 kappa_peak = KAPPA_PEAK, mu_slide = MU_SLIDE, 
-                 drag_c = DRAG_COEFF, fd1 = FINAL_DRIVE, 
+                 kappa_peak = KAPPA_PEAK, mu_slide = MU_SLIDE, fd1 = FINAL_DRIVE, 
                  fd2 = FINAL_DRIVE_NEW, sd = SHIFT_DELAY):
         self.mass = mass
         self.cr = cr
@@ -96,7 +94,6 @@ class carInfo:
         self.mu_peak = mu_peak
         self.kappa_peak = kappa_peak
         self.mu_slide = mu_slide
-        self.drag_c = drag_c
         self.n_driven = self.mass * G
 
         self.fd1 = fd1
@@ -224,7 +221,7 @@ def simulate_run(carInfo):
             F_drive = pacejka_traction_limited_force(F_drive_ideal, kappa, carInfo)
 
         # Resistive forces
-        F_drag = carInfo.cd * velocity**2
+        F_drag = 0.5 * D_AIR * velocity**2 * carInfo.cd * carInfo.af
         F_roll = carInfo.cr * carInfo.mass * G
 
         # Longitudinal acceleration
@@ -301,6 +298,7 @@ def plot_results(axes, results):
     ax2.plot(t, rpm, label="Engine RPM", color="C3", lw=2)
     ax2.set_ylabel("RPM")
     ax2.grid(True)
+    ax2.set_ylim(3000, ENGINE_REDLINE_RPM * 1.1)
 
     # Gear
     ax3.step(t, gear, where="post", label="Gear", color="C2", lw=2)
@@ -351,7 +349,7 @@ def plot_tire_curve(ax, carInfo):
 
 def possible_final_drives():
     big_gears = np.linspace(35, 66, 66 - 35)
-    little_gears = np.linspace(14, 18, 81 - 14)
+    little_gears = np.linspace(14, 18, 18 - 14)
     ratios = []
 
     for bgear in big_gears:
@@ -367,16 +365,16 @@ def possible_final_drives():
 
 def highlight_fds(ax, carInfo):
     # Highlight specific FD values at nominal SHIFT_DELAY
-    for fd, color, marker in [
-        (FINAL_DRIVE, "r", "o"),
-        (FINAL_DRIVE_NEW, "g", "o"),
-        (3.182, "b", "*"),
-        (2.917, "c", "*"),
+    for fd, color, marker, label in [
+        (FINAL_DRIVE, "r", "o", "11:41"),
+        (FINAL_DRIVE_NEW, "g", "o", "12:41"),
+        (3.182, "b", "*", "11:35"),
+        (2.917, "c", "*", "12:35"),
     ]:
         carInfo.fd1 = fd
         carInfo.sd = SHIFT_DELAY
         res = simulate_run(carInfo)
-        ax.plot(res["t_final"], fd, marker + color, label=f"FD: {fd}")
+        ax.plot(res["t_final"], fd, marker + color, label=label)
 
 def plot_FD_curves(ax, carInfo):
     """Plot FD sweep into the provided Axes ax."""
@@ -401,7 +399,7 @@ def plot_FD_curves(ax, carInfo):
 def plot_SD_FD_curves(ax, carInfo):
     """Plot multiple FD curves for different shift delays into ax."""
     fds = possible_final_drives()
-    shift_delays = np.linspace(0.09, 1.0, 5)
+    shift_delays = np.linspace(0.09, carInfo.sd, 3)
     sd1 = carInfo.sd
     
     for sd in shift_delays:
@@ -416,9 +414,9 @@ def plot_SD_FD_curves(ax, carInfo):
     carInfo.sd = sd1
     highlight_fds(ax, carInfo)
     ax.set_ylabel("Final drive ratio")
-    ax.set_ylim(2, 4.5)
+    ax.set_ylim(2.5, 4.5)
     ax.set_xlabel(f"Time to {TARGET_DISTANCE:.0f} m [s]")
-    ax.set_xlim(3.5, 6)
+    ax.set_xlim(4, 5)
     ax.grid(True)
     ax.set_title("Shift delay effect on final drive")
     ax.legend()
