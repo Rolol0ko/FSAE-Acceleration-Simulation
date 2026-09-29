@@ -20,6 +20,7 @@ from sim_core import (
     CD,
     A_FRONTAL,
     TARGET_DISTANCE,
+    CR,
     carInfo
 )
 
@@ -78,6 +79,7 @@ class FSAESimApp:
         self.m_var = make_input(ttk, self, parameter_labels, parameter_inputs, "Car Mass [kg]", M_VEHICLE)
         self.cd_var = make_input(ttk, self, parameter_labels, parameter_inputs, "Drag Coeffiecent [-]", CD)
         self.af_var = make_input(ttk, self, parameter_labels, parameter_inputs, "Frontal Area [m^2]", A_FRONTAL)
+        self.cr_var = make_input(ttk, self, parameter_labels, parameter_inputs, "Rolling Resistance [-]", CR)
 
         plot_controls = ttk.Frame(controls)
         plot_controls.pack(side=tk.BOTTOM, fill=tk.BOTH)
@@ -150,6 +152,7 @@ class FSAESimApp:
             car.mass = float(self.m_var.get())
             car.cd = float(self.cd_var.get())
             car.af = float(self.af_var.get())
+            car.cr = float(self.cr_var.get())
             # Old friction model
             #car.mu_peak = float(self.mup_var.get())
             #car.kappa_peak = float(self.kp_var.get()) / 100
@@ -210,7 +213,7 @@ class FSAESimApp:
                 # plot wheel tourque
                 plot_torque_curve(ax0)
             elif mode == "grip_curve":
-                plot_tire_curve(ax0, car)
+                plot_tire_curve(ax0)
             else:
                 ax0.text(0.5, 0.5, "Unknown mode", transform=ax0.transAxes, ha="center", va="center")
         except Exception as e:

@@ -7,8 +7,8 @@ G = 9.81                # [m/s^2] gravity
 CR = 0.012              # [-] rolling resistance coefficient
 R_TIRE = 0.2032         # [m] effective loaded tire radius
 D_AIR = 1.225           # [kg/m^3] air density
-CD = 0.85                # [-] drag coefficient
-A_FRONTAL = 2.2         # [m^2] frontal area
+CD = 0.85               # [-] drag coefficient
+A_FRONTAL = 2.0           # [m^2] frontal area
 MU_PEAK = 1.4           # peak friction coefficient
 KAPPA_PEAK = 0.60       # slip ratio at peak (~10%)
 MU_SLIDE = 0.9          # sliding friction at high slip
@@ -27,14 +27,15 @@ GEAR_RATIOS = {
     6: 1.23,
 }
 
-ENGINE_REDLINE_RPM = 13000.0  # [rpm]
+ENGINE_REDLINE_RPM = 13500.0  # [rpm]
 ENGINE_IDLE_RPM = 6000.0      # [rpm]
-ENGINE_LAUNCH_RPM = 9000.0    # [rpm]
-LAUNCH_DURATION = 1.3         # [s]
+ENGINE_LAUNCH_RPM = 9000.0   # [rpm]
+LAUNCH_DURATION = 1.3           # [s]
 
 # Torque map
 # Linearly interpolated between these points [rpm, lbft]
 WHEEL_TORQUE_POINTS = np.array([
+    [0,0],
     [5050.0,45.7241379310345],
     [5100.0,46.9770114942529],
     [5150.0,52.0],
@@ -184,7 +185,7 @@ WHEEL_TORQUE_POINTS = np.array([
 
 # Shifting & control
 SHIFT_DELAY = 0.225       # [s] duration of no drive force during an upshift
-USE_AUTO_SHIFT = True    # if False, no shifting: stay in 1st gear
+USE_AUTO_SHIFT = True     # if False, no shifting: stay in 1st gear
 
 # Per-gear upshift RPM thresholds
 SHIFT_RPM_THRESHOLDS = {
@@ -198,13 +199,13 @@ SHIFT_RPM_THRESHOLDS = {
 
 # Simulation control
 DT = 0.005                 # [s] time step
-T_MAX = 10.0             # [s] safety time limit
+T_MAX = 10.0               # [s] safety time limit
 
 # Distance Based
 TARGET_DISTANCE = 75.0   # [m] acceleration event distance (FSAE-style)
 
 # Or Speed Based
-TARGET_SPEED_KMH = 100.0           # [km/h] target speed
+TARGET_SPEED_KMH = 100.0                  # [km/h] target speed
 TARGET_SPEED_MS = TARGET_SPEED_KMH / 3.6  # [m/s]
 
 class carInfo:
@@ -228,10 +229,10 @@ class carInfo:
 
         self.sd = sd
 
-def wheel_torque_from_rpm(rpm: float) -> float:
+def engine_torque_from_rpm(rpm: float) -> float:
     """
     Return wheel torque [N·m] at a given engine speed [rpm],
-    using linear interpolation of ENGINE_TORQUE_POINTS_LBFT (in lb·ft).
+    using linear interpolation of WHEEL_TORQUE_POINTS_LBFT (in lb·ft).
     """
     rpms = WHEEL_TORQUE_POINTS[:, 0]
     torques_lbft = WHEEL_TORQUE_POINTS[:, 1]
@@ -270,12 +271,12 @@ def basic_traction_limited_force(F_drive_ideal: float, kappa: float, carInfo) ->
     F_max = mu * carInfo.n_driven
     return float(np.clip(F_drive_ideal, -F_max, F_max))
 
-def pacejka_traction_limited_force(F_drive_ideal: float, kappa: float, carInfo):
+def pacejka_traction_limited_force(F_drive_ideal: float, kappa: float):
     C = 5.83         # Shape Factor
     D = 3900         # Peak Factor
-    b = 600          # Stiffness Factor B = change of stiffness with slip · Fz / (C · D)
+    B = 600          # Stiffness Factor B = change of stiffness with slip · Fz / (C · D)
     E = 0.993        # Curvature Factor
-    F_max = D * np.sin(C * np.arctan(b * kappa - E * (b * kappa - np.arctan(b * kappa))))
+    F_max = D * np.sin(C * np.arctan(B * kappa - E * (B * kappa - np.arctan(B * kappa))))
     return float(np.clip(F_drive_ideal, -F_max, F_max))
 
 def simulate_run(carInfo):
@@ -286,6 +287,7 @@ def simulate_run(carInfo):
     shifting = False
     shift_time_left = 0.0
     next_gear = gear
+    engine_rpm = 0
 
     # Data recording lists
     ts = []
@@ -302,14 +304,15 @@ def simulate_run(carInfo):
         omega_w = velocity / carInfo.tireRad  # [rad/s]
         gear_ratio = GEAR_RATIOS[gear]
 
-        if deltaT < LAUNCH_DURATION:
+        engine_rad_per_s = omega_w * PRIMARY_REDUCTION * gear_ratio * carInfo.fd1
+        real_engine_rpm = engine_rad_per_s * 60.0 / (2.0 * np.pi)
+
+        if real_engine_rpm < engine_rpm and gear == 2 and shifting == False:
             # During launch: hold engine at (roughly) fixed high RPM
             engine_rpm = np.clip(ENGINE_LAUNCH_RPM, ENGINE_IDLE_RPM, ENGINE_REDLINE_RPM)
         else:
             # After launch: fully coupled engine–wheel kinematics
-            engine_rad_per_s = omega_w * PRIMARY_REDUCTION * gear_ratio * carInfo.fd1
-            engine_rpm = engine_rad_per_s * 60.0 / (2.0 * np.pi)
-            engine_rpm = np.clip(engine_rpm, ENGINE_IDLE_RPM, ENGINE_REDLINE_RPM)
+            engine_rpm = np.clip(real_engine_rpm, ENGINE_IDLE_RPM, ENGINE_REDLINE_RPM)
 
         # Automatic upshift logic (initiate shift)
         if USE_AUTO_SHIFT and not shifting:
@@ -329,7 +332,7 @@ def simulate_run(carInfo):
                 gear = next_gear
         else:
             # Engine torque at current rpm
-            T_e = wheel_torque_from_rpm(engine_rpm)
+            T_e = engine_torque_from_rpm(engine_rpm)
 
             # Driveline torque to wheel
             gear_ratio = GEAR_RATIOS[gear]
@@ -345,7 +348,7 @@ def simulate_run(carInfo):
                 kappa = (omega_w - velocity) / max(velocity, 1e-3)
 
             # Apply simple traction limit
-            F_drive = pacejka_traction_limited_force(F_drive_ideal, kappa, carInfo)
+            F_drive = pacejka_traction_limited_force(F_drive_ideal, kappa)
 
         # Resistive forces
         F_drag = 0.5 * D_AIR * velocity**2 * carInfo.cd * carInfo.af
@@ -430,6 +433,7 @@ def plot_results(axes, results):
     # Gear
     ax3.step(t, gear, where="post", label="Gear", color="C2", lw=2)
     ax3.set_ylabel("Gear")
+    ax3.set_ylim(1, 6)
     ax3.set_xlabel("Time [s]")
     ax3.grid(True)
 
@@ -443,7 +447,7 @@ def plot_torque_curve(ax):
     rpm_smooth = np.linspace(rpms_base[0], rpms_base[-1], 300)
 
     # Use the sim's interpolation function (returns N·m), then convert to lb·ft
-    tq_nm_smooth = np.array([wheel_torque_from_rpm(r) for r in rpm_smooth])
+    tq_nm_smooth = np.array([engine_torque_from_rpm(r) for r in rpm_smooth])
     tq_lbft_smooth = tq_nm_smooth / 1.35581795
 
     ax.set_xlim(5000, 14000)
@@ -456,7 +460,7 @@ def plot_torque_curve(ax):
     ax.grid(True)
     ax.legend()
 
-def plot_tire_curve(ax, carInfo):
+def plot_tire_curve(ax):
     """Plot the frictional force of the tires across the power"""
     kappa_range = [0, 4]
 
@@ -464,7 +468,7 @@ def plot_tire_curve(ax, carInfo):
     kappa_smooth = np.linspace(kappa_range[0], kappa_range[-1], 300)
 
     # Use the sim's grip function (N)
-    grip_N_smooth = np.array([pacejka_traction_limited_force(100000, r, carInfo) for r in kappa_smooth])
+    grip_N_smooth = np.array([pacejka_traction_limited_force(100000, r) for r in kappa_smooth])
 
     ax.plot(kappa_smooth * 100, grip_N_smooth, color="C3", lw=3)
     ax.set_xlabel("Slip Ratio [%]")
@@ -475,8 +479,8 @@ def plot_tire_curve(ax, carInfo):
     ax.grid(True)
 
 def possible_final_drives():
-    big_gears = np.linspace(35, 66, 66 - 35)
-    little_gears = np.linspace(14, 18, 18 - 14)
+    big_gears = np.linspace(18, 66, 66 - 18)
+    little_gears = np.linspace(11, 18, 66 - 11)
     ratios = []
 
     for bgear in big_gears:
@@ -516,9 +520,9 @@ def plot_FD_curves(ax, carInfo):
 
     highlight_fds(ax, carInfo)
     ax.set_ylabel("Final drive ratio")
-    ax.set_ylim(2, 4.5)
+    ax.set_ylim(1, 6)
     ax.set_xlabel(f"Time to {TARGET_DISTANCE:.0f} m [s]")
-    ax.set_xlim(3.5, 6)
+    ax.set_xlim(4, 5)
     ax.grid(True)
     ax.set_title(f"Optimized Final Drive Ratios\nshift delay: {carInfo.sd*1000:.0f} ms")
     ax.legend()
@@ -526,7 +530,7 @@ def plot_FD_curves(ax, carInfo):
 def plot_SD_FD_curves(ax, carInfo):
     """Plot multiple FD curves for different shift delays into ax."""
     fds = possible_final_drives()
-    shift_delays = np.linspace(0.09, carInfo.sd, 3)
+    shift_delays = np.linspace(0.1, 1, 5)
     sd1 = carInfo.sd
     
     for sd in shift_delays:
@@ -541,9 +545,9 @@ def plot_SD_FD_curves(ax, carInfo):
     carInfo.sd = sd1
     highlight_fds(ax, carInfo)
     ax.set_ylabel("Final drive ratio")
-    ax.set_ylim(2.5, 4.5)
+    ax.set_ylim(0.5, 7)
     ax.set_xlabel(f"Time to {TARGET_DISTANCE:.0f} m [s]")
-    ax.set_xlim(4, 5)
+    ax.set_xlim(3.5, 6)
     ax.grid(True)
     ax.set_title("Shift delay effect on final drive")
     ax.legend()
