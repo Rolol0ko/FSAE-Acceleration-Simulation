@@ -15,12 +15,15 @@ from sim_core import (
     plot_torque_curve,
     plot_tire_curve,
     plot_results,
+    simulate_FD_curve,
+    simulate_SD_FD_curves,
     SHIFT_DELAY,
-    M_VEHICLE,
-    CD,
-    A_FRONTAL,
+    MASS_CAR,
+    DRAG_C,
+    FRONTAL_AREA,
     TARGET_DISTANCE,
-    CR,
+    ROLLING_RESISTANCE_C,
+    ENGINE_LAUNCH_RPM,
     carInfo
 )
 
@@ -53,7 +56,7 @@ class FSAESimApp:
         
         # ----- Left: controls -----
         controls = ttk.Frame(master, padding=5)
-        controls.pack(side=tk.LEFT, fill=tk.BOTH)
+        controls.pack(side=tk.LEFT, fill=tk.BOTH, expand=False)
 
         # Parameters
         ttk.Label(controls, text="Car Parameters", font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 4))
@@ -70,19 +73,20 @@ class FSAESimApp:
         self.big_ratio = tk.StringVar(value=f"{41}")    # Rear sprocket teeth
         self.little_ratio = tk.StringVar(value=f"{11}") # Front sprocket teeth
         fd_inputs = ttk.Frame(parameter_inputs)
-        fd_inputs.pack(side=tk.TOP, fill=tk.BOTH)
-        ttk.Entry(fd_inputs, textvariable=self.big_ratio, width=10).pack(anchor="e", pady=(0, 4), side=tk.RIGHT, fill=tk.BOTH)
-        ttk.Label(fd_inputs, text=":").pack(anchor="e", pady=(0, 3.5), side=tk.RIGHT, fill=tk.BOTH)
-        ttk.Entry(fd_inputs, textvariable=self.little_ratio, width=10).pack(anchor="e", pady=(0, 4), side=tk.RIGHT, fill=tk.BOTH)
+        fd_inputs.pack(side=tk.TOP, fill=tk.Y)
+        ttk.Entry(fd_inputs, textvariable=self.big_ratio, width=10).pack(anchor="e", pady=(0, 4), side=tk.RIGHT, fill=tk.Y)
+        ttk.Label(fd_inputs, text=":").pack(anchor="e", pady=(0, 3.5), side=tk.RIGHT, fill=tk.Y)
+        ttk.Entry(fd_inputs, textvariable=self.little_ratio, width=10).pack(anchor="e", pady=(0, 4), side=tk.RIGHT, fill=tk.Y)
         
         self.sd_var = make_input(ttk, self, parameter_labels, parameter_inputs, "Shift delay [s]", SHIFT_DELAY)
-        self.m_var = make_input(ttk, self, parameter_labels, parameter_inputs, "Car Mass [kg]", M_VEHICLE)
-        self.cd_var = make_input(ttk, self, parameter_labels, parameter_inputs, "Drag Coeffiecent [-]", CD)
-        self.af_var = make_input(ttk, self, parameter_labels, parameter_inputs, "Frontal Area [m^2]", A_FRONTAL)
-        self.cr_var = make_input(ttk, self, parameter_labels, parameter_inputs, "Rolling Resistance [-]", CR)
+        self.m_var = make_input(ttk, self, parameter_labels, parameter_inputs, "Car Mass [kg]", MASS_CAR)
+        self.cd_var = make_input(ttk, self, parameter_labels, parameter_inputs, "Drag Coeffiecent [-]", DRAG_C)
+        self.af_var = make_input(ttk, self, parameter_labels, parameter_inputs, "Frontal Area [m^2]", FRONTAL_AREA)
+        self.cr_var = make_input(ttk, self, parameter_labels, parameter_inputs, "Rolling Resistance [-]", ROLLING_RESISTANCE_C)
+        self.launch_rpm_var = make_input(ttk, self, parameter_labels, parameter_inputs, "Launch Engine Speed [rpm]", ENGINE_LAUNCH_RPM)
 
         plot_controls = ttk.Frame(controls)
-        plot_controls.pack(side=tk.BOTTOM, fill=tk.BOTH)
+        plot_controls.pack(side=tk.BOTTOM, fill=tk.Y)
         # Plot mode
         ttk.Label(plot_controls, text="Graph type", font=("Segoe UI", 10, "bold")).pack(anchor="center", pady=(8, 2))
         self.plot_mode = tk.StringVar(value="single")
@@ -140,6 +144,36 @@ class FSAESimApp:
         # Do an initial plot
         self.run_plot()
 
+    def show_loading_screen(self):
+        # Display a loading popup while a graph is generated.
+        self.loading = tk.Toplevel(self.master)
+
+        ttk.Style(self.loading).theme_use("black")
+
+        self.loading.title("Loading")
+        self.loading.geometry("280x110")
+        self.loading.resizable(False, False)
+        
+        # Keep the popup above the main application
+        self.loading.transient(self.master)
+        self.loading.grab_set()
+
+        ttk.Label(
+            self.loading,
+            text="Generating graph...",
+            font=("Segoe UI", 10, "bold")
+        ).pack(pady=(20, 10))
+
+        # Make the popup appear before plotting begins
+        self.loading.update_idletasks()
+        self.loading.update()
+
+    def hide_loading_screen(self):
+        """Close the loading popup."""
+        if hasattr(self, "loading") and self.loading.winfo_exists():
+            self.loading.grab_release()
+            self.loading.destroy()
+
     def run_plot(self, initial: bool = False):
         """Read parameters, choose plot mode, and draw the appropriate graph."""
 
@@ -148,27 +182,25 @@ class FSAESimApp:
         # Parse parameters
         try:
             car.fd1 = float(self.big_ratio.get()) / float(self.little_ratio.get())
-            car.sd = float(self.sd_var.get())
+            car.shift_delay = float(self.sd_var.get())
             car.mass = float(self.m_var.get())
-            car.cd = float(self.cd_var.get())
-            car.af = float(self.af_var.get())
-            car.cr = float(self.cr_var.get())
-            # Old friction model
-            #car.mu_peak = float(self.mup_var.get())
-            #car.kappa_peak = float(self.kp_var.get()) / 100
-            #car.mu_slide = float(self.mus_var.get())
+            car.drag_c = float(self.cd_var.get())
+            car.frontal_area = float(self.af_var.get())
+            car.rolling_resistance_c = float(self.cr_var.get())
+            car.launch_rpm = float(self.launch_rpm_var.get())
         except ValueError:
             messagebox.showerror("Input error", "Please enter numeric values for final drive and shift delay.")
             return None
 
         mode = self.plot_mode.get()
+        self.show_loading_screen()
 
-        # Clear figure and create a new Axes
-        self.fig.clear()
-        ax0 = self.fig.add_subplot(111)
-        setup_graph(ax0)
-        
         try:
+            # Clear figure and create a new Axes
+            self.fig.clear()
+            ax0 = self.fig.add_subplot(111)
+            setup_graph(ax0)
+            
             if mode == "single":
                 # Run a single simulation and plot speed vs time
                 self.fig.clear()
@@ -201,13 +233,15 @@ class FSAESimApp:
                 )
             elif mode == "fd_sweep":
                 # Plot FD curves on this Axes for a fixed shift delay
-                plot_FD_curves(ax0, car)
+                curve = simulate_FD_curve(car)
+                plot_FD_curves(ax0, car, curve)
                 ax0.set_title(
-                    "Final drive sweep (shift delay = {:.0f} ms)".format(car.sd * 1000.0)
+                    "Final drive sweep (shift delay = {:.0f} ms)".format(car.shift_delay * 1000.0)
                 )
             elif mode == "fd_sd_sweep":
                 # Plot FD & shift delay sweep on this Axes
-                plot_SD_FD_curves(ax0, car)
+                SD_FD_curves = simulate_SD_FD_curves(car)
+                plot_SD_FD_curves(ax0, car, SD_FD_curves)
                 ax0.set_title("Final drive & shift delay sweep")
             elif mode == "tourque_curve":
                 # plot wheel tourque
@@ -216,11 +250,18 @@ class FSAESimApp:
                 plot_tire_curve(ax0)
             else:
                 ax0.text(0.5, 0.5, "Unknown mode", transform=ax0.transAxes, ha="center", va="center")
+            
+            self.fig.tight_layout()
+            self.canvas.draw()
+            
         except Exception as e:
             if not initial:
-                messagebox.showerror("Error", f"Error while plotting:\n{e}")
-        self.fig.tight_layout()
-        self.canvas.draw()
+                messagebox.showerror(
+                    "Error",
+                    f"Error while plotting:\n{e}"
+                )
+        finally:
+            self.hide_loading_screen()
 
 if __name__ == "__main__":
     root = tk.Tk()
