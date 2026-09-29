@@ -248,29 +248,6 @@ def engine_torque_from_rpm(rpm: float) -> float:
     # Convert to N·m for the rest of the model
     return tq_lbft * 1.35581795
 
-def tire_mu_from_slip(kappa: float, carInfo) -> float:
-    """
-    Very simple longitudinal mu(kappa) curve.
-    Curve rises to a peak then falls slightly.
-    """
-    kappa = max(kappa, 0.0)
-
-    if kappa <= carInfo.kappa_peak:
-        # Linear build-up to peak
-        return carInfo.mu_peak * (kappa / carInfo.kappa_peak)
-    else:
-        # Exponential decay toward slide friction
-        decay = np.exp(-(kappa - carInfo.kappa_peak) / 0.2)
-        return carInfo.mu_slide + (carInfo.mu_peak - carInfo.mu_slide) * decay
-
-def basic_traction_limited_force(F_drive_ideal: float, kappa: float, carInfo) -> float:
-    """
-    Traction limit using a simple mu(kappa) curve.
-    """
-    mu = tire_mu_from_slip(kappa, carInfo)
-    F_max = mu * carInfo.n_driven
-    return float(np.clip(F_drive_ideal, -F_max, F_max))
-
 def pacejka_traction_limited_force(F_drive_ideal: float, kappa: float):
     C = 5.83         # Shape Factor
     D = 3900         # Peak Factor
@@ -389,22 +366,6 @@ def simulate_run(carInfo):
     }
     return results
 
-def print_distance_summary(results):
-    t_final = results["t_final"]
-    v_final = results["v_final"]
-    print(f"Final distance: {TARGET_DISTANCE:.1f} m")
-    print(f"Time to {TARGET_DISTANCE:.1f} m: {t_final:.3f} s")
-    print(f"Final speed: {v_final * 3.6:.1f} km/h")
-
-def print_time_summary(results):
-    t_final = results["t_final"]
-    v_final = results["v_final"]
-    x_final = results["x_final"]
-    print(f"Target: 0 -> {TARGET_SPEED_KMH:.0f} km/h")
-    print(f"Time to {TARGET_SPEED_KMH:.0f} km/h: {t_final:.3f} s")
-    print(f"Speed at end: {v_final * 3.6:.1f} km/h")
-    print(f"Distance covered: {x_final:.1f} m")
-
 def plot_results(axes, results):
     t = results["t"]
     v = results["v"]
@@ -479,20 +440,26 @@ def plot_tire_curve(ax):
     ax.grid(True)
 
 def possible_final_drives():
-    big_gears = np.linspace(18, 66, 66 - 18)
-    little_gears = np.linspace(11, 18, 66 - 11)
-    ratios = []
+    front_min = 11
+    front_max = 18
+    rear_min = 39
+    rear_max = 66
+    rear_sprockets = np.linspace(rear_min, rear_max, rear_max - rear_min)
+    front_sprockets = np.linspace(front_min, front_max, front_max - front_min)
+    final_drive_ratios = []
 
-    for bgear in big_gears:
-        for lgear in little_gears:
-            ratio = float(bgear / lgear)
-            ratios.append(ratio)
-    ratios.sort()
-    for i in range(len(ratios)-1, -1, -1):
-        if np.abs(ratios[i] - ratios[i-1]) < 0.005:
-            del ratios[i]
+    for rear_sprocket in rear_sprockets:
+        for front_sprocket in front_sprockets:
+            final_drive_ratio = float(rear_sprocket / front_sprocket)
+            final_drive_ratios.append(final_drive_ratio)
 
-    return ratios
+    final_drive_ratios.sort()
+
+    for i in range(len(final_drive_ratios)-1, -1, -1):
+        if np.abs(final_drive_ratios[i] - final_drive_ratios[i-1]) < 0.005:
+            del final_drive_ratios[i]
+
+    return final_drive_ratios
 
 def highlight_fds(ax, carInfo):
     # Highlight specific FD values at nominal SHIFT_DELAY

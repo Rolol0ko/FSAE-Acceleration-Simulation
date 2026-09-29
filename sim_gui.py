@@ -7,7 +7,7 @@ from tkinter import ttk, messagebox
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 
-# Import your simulation core
+# Import from simulation core
 from sim_core import (
     simulate_run,
     plot_FD_curves,
