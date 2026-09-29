@@ -15,7 +15,6 @@ from sim_core import (
     plot_torque_curve,
     plot_tire_curve,
     plot_results,
-    FINAL_DRIVE,
     SHIFT_DELAY,
     M_VEHICLE,
     CD,
@@ -79,10 +78,6 @@ class FSAESimApp:
         self.m_var = make_input(ttk, self, parameter_labels, parameter_inputs, "Car Mass [kg]", M_VEHICLE)
         self.cd_var = make_input(ttk, self, parameter_labels, parameter_inputs, "Drag Coeffiecent [-]", CD)
         self.af_var = make_input(ttk, self, parameter_labels, parameter_inputs, "Frontal Area [m^2]", A_FRONTAL)
-        # old friction model
-        #self.mup_var = make_input(ttk, self, parameter_labels, parameter_inputs, "Peak MU [-]", MU_PEAK)
-        #self.kp_var = make_input(ttk, self, parameter_labels, parameter_inputs, "Peak Slip Ratio [%]", KAPPA_PEAK * 100)
-        #self.mus_var = make_input(ttk, self, parameter_labels, parameter_inputs, "MU Slide [-]", MU_SLIDE)
 
         plot_controls = ttk.Frame(controls)
         plot_controls.pack(side=tk.BOTTOM, fill=tk.BOTH)
